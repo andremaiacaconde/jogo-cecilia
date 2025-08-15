@@ -1,0 +1,1 @@
+Apenas jogue o jogo
