@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+<meta charset="UTF-8">
+<title>Jogo: Deixe Cecília Feliz</title>
+<style>
+  :root { --bg:#0f172a; --fg:#e5e7eb; }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:system-ui,Arial;text-align:center}
+  header{padding:10px 16px}
+  .wrap{padding:12px}
+  /* Canvas responsivo e grande */
+  .stage{max-width:1200px;margin:0 auto}
+  canvas{background:#111;border-radius:12px;display:block;margin:0 auto;width:100%;height:auto}
+  .hint{opacity:.85;font-size:14px;margin:8px 0 16px}
+</style>
+</head>
+<body>
+<header>
+  <h1>Deixe Cecília feliz a levando até o tetê</h1>
+</header>
+<div class="wrap stage">
+  <div class="hint">Espaço/↑ para pular • Enter/toque para começar • R reinicia</div>
+  <canvas id="game" width="1000" height="560"></canvas>
+</div>
+<script>
+// ===== Config geral =====
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+
+// Estados
+const STATE = { TITLE:'title', PLAY:'play', WIN:'win', OVER:'over' };
+let state = STATE.TITLE;
+
+// Dimensões e chão
+const GROUND_Y = canvas.height - 80; // posição do chão
+const FLOOR_H = 80;
+
+// Player/goal dimensões
+const player = { x: 80, y: GROUND_Y-64, w: 64, h: 64, vy: 0, img: new Image() };
+const goal   = { x: 900, y: GROUND_Y-72, w: 72, h: 72, img: new Image() };
+
+// Físicas (mais fácil)
+let gravity = 0.35;        // menor gravidade → mais tempo no ar
+const jumpVelocity = -13;  // pulo mais forte
+const speed = 3;           // velocidade do mundo mais lenta
+
+// Obstáculos (mais espaçados)
+const obstacles = [];
+const minGap = 280;  // distância mínima entre obstáculos
+const maxGap = 420;  // distância máxima entre obstáculos
+const obstSize = { w: 44, h: 44 };
+
+// Imagens (ajuste os nomes conforme seus arquivos)
+player.img.src = 'jogador.png';
+goal.img.src   = 'objetivo.png';
+const winImage = new Image(); winImage.src = 'vitoria.png';
+const obstImg  = new Image(); obstImg.src = 'obstaculo.png'; // opcional; se faltar, usa bloco vermelho
+
+// ===== Lógica de geração com espaçamento garantido =====
+function spawnObstacle(){
+  let x;
+  if(obstacles.length === 0){
+    x = canvas.width + 120; // primeiro bem à frente
+  } else {
+    const last = obstacles[obstacles.length-1];
+    x = last.x + rand(minGap, maxGap);
+  }
+  obstacles.push({ x, y: GROUND_Y - obstSize.h, w: obstSize.w, h: obstSize.h });
+}
+
+function setupRun(){
+  obstacles.length = 0;
+  for(let i=0;i<3;i++){ spawnObstacle(); }
+  goal.x = 900;
+  player.x=80; player.y=GROUND_Y-64; player.vy=0;
+}
+
+// ===== Loop =====
+function update(dt){
+  if(state !== STATE.PLAY) return; // Fica parado no título/ganho/derrota
+
+  // Física do player
+  player.vy += gravity;
+  player.y  += player.vy;
+  if(player.y + player.h > GROUND_Y){
+    player.y = GROUND_Y - player.h; player.vy = 0;
+  }
+
+  // Move mundo para a esquerda
+  for(const ob of obstacles){ ob.x -= speed; }
+  goal.x -= speed * 0.2; // move pouco a meta para prolongar percurso
+
+  // Remover obstáculos que saíram da tela
+  while(obstacles.length && obstacles[0].x + obstacles[0].w < -50){ obstacles.shift(); }
+
+  // Spawner por tempo + distância
+  spawnTimer += dt;
+  const needSpawn = (!obstacles.length) || (obstacles[obstacles.length-1].x < canvas.width - rand(minGap, maxGap));
+  if(spawnTimer > 1000 && needSpawn){ // pelo menos 1s entre spawns
+    spawnObstacle();
+    spawnTimer = 0;
+  }
+
+  // Colisões
+  for(const ob of obstacles){ if(aabb(player, ob)) state = STATE.OVER; }
+  if(aabb(player, goal)) state = STATE.WIN;
+}
+
+function draw(){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+
+  // Céu simples
+  const g = ctx.createLinearGradient(0,0,0,canvas.height);
+  g.addColorStop(0,'#0b1022'); g.addColorStop(1,'#0d1230');
+  ctx.fillStyle = g; ctx.fillRect(0,0,canvas.width,canvas.height);
+
+  // Chão
+  ctx.fillStyle = '#16243f';
+  ctx.fillRect(0, GROUND_Y, canvas.width, FLOOR_H);
+
+  // Obstáculos
+  for(const ob of obstacles){
+    if(obstImg.complete && obstImg.naturalWidth){
+      ctx.drawImage(obstImg, ob.x, ob.y, ob.w, ob.h);
+    } else {
+      ctx.fillStyle = '#ef4444';
+      ctx.fillRect(ob.x, ob.y, ob.w, ob.h);
+    }
+  }
+
+  // Objetivo
+  if(goal.img.complete && goal.img.naturalWidth){
+    ctx.drawImage(goal.img, goal.x, goal.y, goal.w, goal.h);
+  } else {
+    ctx.fillStyle = '#22c55e';
+    ctx.fillRect(goal.x, goal.y, goal.w, goal.h);
+  }
+
+  // Player
+  if(player.img.complete && player.img.naturalWidth){
+    ctx.drawImage(player.img, player.x, player.y, player.w, player.h);
+  } else {
+    ctx.fillStyle = '#60a5fa';
+    ctx.fillRect(player.x, player.y, player.w, player.h);
+  }
+
+  // Camadas de mensagens por estado
+  if(state === STATE.TITLE){ drawTitleScreen(); }
+  if(state === STATE.OVER){ drawOverlay('💥 Game Over — pressione R'); }
+  if(state === STATE.WIN){
+    if(winImage.complete && winImage.naturalWidth){
+      ctx.drawImage(winImage, 0, 0, canvas.width, canvas.height);
+    }
+    drawOverlay('🏁 Você venceu! — pressione R');
+  }
+}
+
+function drawOverlay(text){
+  ctx.fillStyle = 'rgba(0,0,0,.55)';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = '#fff';
+  ctx.textAlign = 'center';
+  ctx.font = 'bold 28px system-ui';
+  ctx.fillText(text, canvas.width/2, canvas.height/2 + 8);
+}
+
+function drawTitleScreen(){
+  // Tela inicial ocupando toda a área do canvas
+  ctx.fillStyle = 'rgba(0,0,0,.55)';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  // Título grande (quebra automática em duas linhas se precisar)
+  const lines = wrapText('Deixe Cecília feliz a levando até o tetê', canvas.width * 0.8, 'bold 40px system-ui');
+  ctx.fillStyle = '#fff';
+  ctx.textAlign = 'center';
+  ctx.font = 'bold 40px system-ui';
+
+  const startY = canvas.height/2 - (lines.length-1)*28;
+  lines.forEach((ln, i)=> ctx.fillText(ln, canvas.width/2, startY + i*56));
+
+  ctx.font = '16px system-ui';
+  ctx.fillText('Pressione Enter ou toque para começar', canvas.width/2, canvas.height - 48);
+}
+
+function wrapText(text, maxWidth, font){
+  ctx.font = font;
+  const words = text.split(' ');
+  const lines = [];
+  let line = '';
+  for(const w of words){
+    const test = line ? line + ' ' + w : w;
+    if(ctx.measureText(test).width <= maxWidth){ line = test; }
+    else { lines.push(line); line = w; }
+  }
+  if(line) lines.push(line);
+  return lines;
+}
+
+function aabb(a,b){
+  return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+}
+
+function rand(a,b){ return Math.floor(Math.random()*(b-a+1))+a; }
+
+// ===== Input =====
+addEventListener('keydown', (e)=>{
+  if(state === STATE.TITLE && (e.code==='Enter' || e.code==='Space')){
+    startGame(); e.preventDefault(); return;
+  }
+  if(state === STATE.PLAY && (e.code==='Space' || e.code==='ArrowUp')){
+    if(player.y + player.h >= GROUND_Y - 1){ player.vy = jumpVelocity; }
+    e.preventDefault();
+  }
+  if(e.code==='KeyR'){ toTitle(); }
+});
+
+canvas.addEventListener('pointerdown', ()=>{
+  if(state === STATE.TITLE){ startGame(); return; }
+  if(state === STATE.PLAY && player.y + player.h >= GROUND_Y - 1){ player.vy = jumpVelocity; }
+});
+
+function startGame(){
+  setupRun();
+  spawnTimer = 0;
+  state = STATE.PLAY;
+}
+
+function toTitle(){
+  state = STATE.TITLE;
+}
+
+// ===== Game loop com delta-time =====
+let last=performance.now();
+let spawnTimer = 0; // ms
+function loop(now){
+  const dt = now - last; last = now;
+  update(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
